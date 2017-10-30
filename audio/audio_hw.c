@@ -116,6 +116,11 @@ static void select_device(struct ffhal_audio_device *adev)
         } else if (hp_on) {
             out_dev_id = OUT_DEVICE_HEADPHONE;
         }
+        //++ for fmtx
+        if (adev->out_devices & AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET) {
+            out_dev_id = OUT_DEVICE_HEADPHONE;
+        }
+        //-- for fmtx
         output_route = normal_route_configs[out_dev_id];
     }
     if (adev->active_input) {
