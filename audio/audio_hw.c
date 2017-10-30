@@ -42,15 +42,15 @@
 #define PORT_HDMI     0
 #define PORT_SPDIF    0
 
+#define PLAYBACK_SAMPLE_RATE    44100
 #define PLAYBACK_PERIOD_SIZE    1024
 #define PLAYBACK_PERIOD_COUNT   4
-#define PLAYBACK_SAMPLE_RATE    44100
 #define PLAYBACK_CHANNEL_NUM    2
 
 #define CAPTURE_SAMPLE_RATE     44100
-#define CAPTURE_PERIOD_SIZE     1024
+#define CAPTURE_PERIOD_SIZE     512
 #define CAPTURE_PERIOD_COUNT    4
-#define CAPTURE_CHANNEL_NUM     2
+#define CAPTURE_CHANNEL_NUM     1
 
 #define AUDIO_PATH_XML   "/system/etc/a64_paths.xml"
 
@@ -176,7 +176,12 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
 
 static audio_channel_mask_t out_get_channels(const struct audio_stream *stream)
 {
-    return AUDIO_CHANNEL_OUT_STEREO;
+    struct ffhal_stream_out *out = (struct ffhal_stream_out *)stream;
+    if (out->config.channels == 1) {
+        return AUDIO_CHANNEL_OUT_MONO;
+    } else {
+        return AUDIO_CHANNEL_OUT_STEREO;
+    }
 }
 
 static audio_format_t out_get_format(const struct audio_stream *stream)
@@ -209,11 +214,11 @@ static int out_standby(struct audio_stream *stream)
     struct ffhal_stream_out *out = (struct ffhal_stream_out *)stream;
     int    status;
 
-    pthread_mutex_lock(&out->dev->lock);
+//  pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
     status = do_output_standby(out);
     pthread_mutex_unlock(&out->lock);
-    pthread_mutex_unlock(&out->dev->lock);
+//  pthread_mutex_unlock(&out->dev->lock);
 
     return status;
 }
@@ -273,8 +278,7 @@ static int out_set_volume(struct audio_stream_out *stream, float left, float rig
     return -ENOSYS;
 }
 
-static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
-        size_t bytes)
+static ssize_t out_write(struct audio_stream_out *stream, const void *buffer, size_t bytes)
 {
     int    ret;
     struct ffhal_stream_out   *out  = (struct ffhal_stream_out *)stream;
@@ -287,18 +291,19 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
      * on the output stream mutex - e.g. executing select_mode() while holding the hw device
      * mutex
      */
-    pthread_mutex_lock(&adev->lock);
+//  pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
         ret = start_output_stream(out);
         if (ret != 0) {
-            pthread_mutex_unlock(&adev->lock);
+            ALOGD("failed to start output stream !");
+//          pthread_mutex_unlock(&adev->lock);
             goto exit;
         } else {
             out->standby = 0;
         }
     }
-    pthread_mutex_unlock(&adev->lock);
+//  pthread_mutex_unlock(&adev->lock);
 
     ret = pcm_mmap_write(out->pcm, buffer, out_frames * frame_size);
     if (ret == 0) {
@@ -399,7 +404,6 @@ static size_t in_get_buffer_size(const struct audio_stream *stream)
 static audio_channel_mask_t in_get_channels(const struct audio_stream *stream)
 {
     struct ffhal_stream_in *in = (struct ffhal_stream_in *)stream;
-
     if (in->config.channels == 1) {
         return AUDIO_CHANNEL_IN_MONO;
     } else {
@@ -438,11 +442,11 @@ static int in_standby(struct audio_stream *stream)
     struct ffhal_stream_in *in = (struct ffhal_stream_in *)stream;
     int    status;
 
-    pthread_mutex_lock(&in->dev->lock);
+//  pthread_mutex_lock(&in->dev->lock);
     pthread_mutex_lock(&in->lock);
     status = do_input_standby(in);
     pthread_mutex_unlock(&in->lock);
-    pthread_mutex_unlock(&in->dev->lock);
+//  pthread_mutex_unlock(&in->dev->lock);
     return status;
 }
 
@@ -453,7 +457,7 @@ static int in_dump(const struct audio_stream *stream, int fd)
 
 static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
 {
-    return 0;
+    return -ENOSYS;
 }
 
 static char* in_get_parameters(const struct audio_stream *stream, const char *keys)
@@ -463,30 +467,30 @@ static char* in_get_parameters(const struct audio_stream *stream, const char *ke
 
 static int in_set_gain(struct audio_stream_in *stream, float gain)
 {
-    return 0;
+    return -ENOSYS;
 }
 
-static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t bytes)
+static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t bytes)
 {
     int ret = 0;
     struct ffhal_stream_in    *in   = (struct ffhal_stream_in *)stream;
     struct ffhal_audio_device *adev = in->dev;
 
-    pthread_mutex_lock(&adev->lock);
+//  pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
     if (in->standby) {
         ret = start_input_stream(in);
         if (ret != 0) {
-            pthread_mutex_unlock(&adev->lock);
+            ALOGD("failed to start input stream !");
+//          pthread_mutex_unlock(&adev->lock);
             goto exit;
         } else {
             in->standby = 0;
         }
     }
-    pthread_mutex_unlock(&adev->lock);
+//  pthread_mutex_unlock(&adev->lock);
 
     ret = pcm_read(in->pcm, buffer, bytes);
-
     if (adev->mic_mute) {
         memset(buffer, 0, bytes);
     }
@@ -523,7 +527,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         struct audio_stream_out **stream_out,
         const char *address __unused)
 {
-    struct ffhal_audio_device *ladev = (struct ffhal_audio_device *)dev;
+    struct ffhal_audio_device *adev = (struct ffhal_audio_device *)dev;
     struct ffhal_stream_out   *out;
 
     out = (struct ffhal_stream_out *)calloc(1, sizeof(struct ffhal_stream_out));
@@ -556,7 +560,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->stream.get_next_write_timestamp    = out_get_next_write_timestamp;
     out->stream.get_presentation_position   = out_get_presentation_position;
 
-    out->dev             = ladev;
+    out->dev             = adev;
     out->standby         = 1;
 
     config->format       = out_get_format(&out->stream.common);
@@ -638,7 +642,7 @@ static int adev_get_mic_mute(const struct audio_hw_device *dev, bool *state)
 
 static size_t adev_get_input_buffer_size(const struct audio_hw_device *dev, const struct audio_config *config)
 {
-    return CAPTURE_PERIOD_SIZE * CAPTURE_CHANNEL_NUM * 2;
+    return CAPTURE_PERIOD_SIZE * CAPTURE_CHANNEL_NUM * sizeof(int16_t);
 }
 
 static int adev_open_input_stream(struct audio_hw_device *dev,
