@@ -144,7 +144,6 @@ static int start_output_stream(struct ffhal_stream_out *out)
     } else {
         card = CARD_CODEC;
         port = PORT_CODEC;
-
     }
     out->pcm = pcm_open(card, port, PCM_OUT | PCM_MMAP | PCM_NOIRQ | PCM_MONOTONIC, &out->config);
     if (!pcm_is_ready(out->pcm)) {
@@ -155,7 +154,6 @@ static int start_output_stream(struct ffhal_stream_out *out)
     } else {
         adev->active_output = out;
     }
-
     select_device(adev);
     return 0;
 }
@@ -257,7 +255,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
             }
             adev->out_devices &= ~AUDIO_DEVICE_OUT_ALL;
             adev->out_devices |= val;
-            select_device(adev);
+//          select_device(adev);
         }
         pthread_mutex_unlock(&out->lock);
         pthread_mutex_unlock(&adev->lock);
@@ -296,19 +294,19 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer, si
      * on the output stream mutex - e.g. executing select_mode() while holding the hw device
      * mutex
      */
-//  pthread_mutex_lock(&adev->lock);
+    pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
         ret = start_output_stream(out);
         if (ret != 0) {
             ALOGD("failed to start output stream !");
-//          pthread_mutex_unlock(&adev->lock);
+            pthread_mutex_unlock(&adev->lock);
             goto exit;
         } else {
             out->standby = 0;
         }
     }
-//  pthread_mutex_unlock(&adev->lock);
+    pthread_mutex_unlock(&adev->lock);
 
     ret = pcm_mmap_write(out->pcm, buffer, out_frames * frame_size);
     if (ret == 0) {
@@ -317,15 +315,12 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer, si
 
 exit:
     pthread_mutex_unlock(&out->lock);
-
     if (ret != 0) {
         usleep((int64_t)bytes * 1000000 / audio_stream_out_frame_size(stream) / out_get_sample_rate(&stream->common));
     }
 
     return bytes;
 }
-
-
 
 static int out_get_presentation_position(const struct audio_stream_out *stream,
                                    uint64_t *frames, struct timespec *timestamp)
@@ -481,19 +476,19 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t byte
     struct ffhal_stream_in    *in   = (struct ffhal_stream_in *)stream;
     struct ffhal_audio_device *adev = in->dev;
 
-//  pthread_mutex_lock(&adev->lock);
+    pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
     if (in->standby) {
         ret = start_input_stream(in);
         if (ret != 0) {
             ALOGD("failed to start input stream !");
-//          pthread_mutex_unlock(&adev->lock);
+            pthread_mutex_unlock(&adev->lock);
             goto exit;
         } else {
             in->standby = 0;
         }
     }
-//  pthread_mutex_unlock(&adev->lock);
+    pthread_mutex_unlock(&adev->lock);
 
     ret = pcm_read(in->pcm, buffer, bytes);
     if (adev->mic_mute) {
@@ -501,11 +496,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t byte
     }
 
 exit:
+    pthread_mutex_unlock(&in->lock);
     if (ret < 0) {
         usleep((int64_t)bytes * 1000000 / audio_stream_in_frame_size(stream) /
                 in_get_sample_rate(&stream->common));
     }
-    pthread_mutex_unlock(&in->lock);
     return bytes;
 }
 
