@@ -24,6 +24,7 @@ LOCAL_C_INCLUDES += \
 	system/media/camera/include \
 
 LOCAL_SRC_FILES := \
+    v4l2dev.c \
     camdev.c \
     camhal.c
 

@@ -12,12 +12,24 @@ typedef struct {
     hw_device_t       common;
     camera_device_ops_t *ops;
     void               *priv;
-    int             cameraid;
+
+    //++ camera device context
+    int                             cameraid;
+    preview_stream_ops_t           *window;
+    camera_notify_callback          cb_notify;
+    camera_data_callback            cb_data;
+    camera_data_timestamp_callback  cb_timestamp;
+    camera_request_memory           cb_memory;
+    void                           *cb_user;
+    int32_t                         msg_enabler;
+    //-- camera device context
 } ffhal_camera_device_t;
 
 // 内部函数实现
 static int camdev_set_preview_window(struct camera_device *dev, struct preview_stream_ops *window)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    cam->window = window;
     return 0;
 }
 
@@ -28,19 +40,30 @@ static void camdev_set_callbacks(struct camera_device *dev,
                     camera_request_memory get_memory,
                     void *user)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    cam->cb_notify    = notify_cb;
+    cam->cb_data      = data_cb;
+    cam->cb_timestamp = data_cb_timestamp;
+    cam->cb_memory    = get_memory;
+    cam->cb_user      = user;
 }
 
 static void camdev_enable_msg_type(struct camera_device *dev, int32_t msg_type)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    cam->msg_enabler |= msg_type;
 }
 
 static void camdev_disable_msg_type(struct camera_device *dev, int32_t msg_type)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    cam->msg_enabler &= ~msg_type;
 }
 
 static int camdev_msg_type_enabled(struct camera_device *dev, int32_t msg_type)
 {
-    return 0;
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    return (cam->msg_enabler & msg_type);
 }
 
 static int camdev_start_preview(struct camera_device *dev)
@@ -126,6 +149,25 @@ static void camdev_put_parameters(struct camera_device *dev, char *params)
 
 static int camdev_send_command(struct camera_device *dev, int32_t cmd, int32_t arg1, int32_t arg2)
 {
+    switch (cmd)
+    {
+    case CAMERA_CMD_PING:
+        break;
+    case CAMERA_CMD_SET_DISPLAY_ORIENTATION:
+        break;
+    case CAMERA_CMD_SET_CEDARX_RECORDER:
+        break;
+    case CAMERA_CMD_ENABLE_FOCUS_MOVE_MSG:
+        break;
+    case CAMERA_CMD_START_FACE_DETECTION:
+        break;
+    case CAMERA_CMD_STOP_FACE_DETECTION:
+        break;
+    case CAMERA_CMD_START_SMART_DETECTION:
+        break;
+    case CAMERA_CMD_STOP_SMART_DETECTION:
+        break;
+    }
     return 0;
 }
 
