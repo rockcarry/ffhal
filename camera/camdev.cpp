@@ -5,6 +5,7 @@
 #include <hardware/hardware.h>
 #include <hardware/camera_common.h>
 #include <hardware/camera.h>
+#include "v4l2dev.h"
 #include "camdev.h"
 
 // 内部类型定义
@@ -15,13 +16,15 @@ typedef struct {
 
     //++ camera device context
     int                             cameraid;
-    preview_stream_ops_t           *window;
     camera_notify_callback          cb_notify;
     camera_data_callback            cb_data;
     camera_data_timestamp_callback  cb_timestamp;
     camera_request_memory           cb_memory;
     void                           *cb_user;
     int32_t                         msg_enabler;
+    void                           *v4l2dev;
+    #define STATUS_PREVIEW_EN       (1 << 0)
+    int32_t                         status;
     //-- camera device context
 } ffhal_camera_device_t;
 
@@ -29,7 +32,7 @@ typedef struct {
 static int camdev_set_preview_window(struct camera_device *dev, struct preview_stream_ops *window)
 {
     ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
-    cam->window = window;
+    v4l2dev_set_preview_window(cam->v4l2dev, window);
     return 0;
 }
 
@@ -68,18 +71,33 @@ static int camdev_msg_type_enabled(struct camera_device *dev, int32_t msg_type)
 
 static int camdev_start_preview(struct camera_device *dev)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    if ((cam->status & STATUS_PREVIEW_EN) == 0) {
+        ALOGD("camdev_start_preview");
+        v4l2dev_preview_start(cam->v4l2dev);
+        cam->status |= STATUS_PREVIEW_EN;
+    }
     return 0;
 }
 
 static void camdev_stop_preview(struct camera_device *dev)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    if ((cam->status & STATUS_PREVIEW_EN) != 0) {
+        ALOGD("camdev_stop_preview");
+        v4l2dev_preview_stop(cam->v4l2dev);
+        cam->status &=~STATUS_PREVIEW_EN;
+    }
 }
 
 static int camdev_preview_enabled(struct camera_device *dev)
 {
-    return 0;
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    ALOGD("camdev_preview_enabled");
+    return (cam->status & STATUS_PREVIEW_EN) ? 1 : 0;
 }
 
+#ifdef ANDROID_5_1
 static int camdev_enable_preview(struct camera_device *dev)
 {
     return 0;
@@ -89,6 +107,7 @@ static int camdev_disable_preview(struct camera_device *dev)
 {
     return 0;
 }
+#endif
 
 static int camdev_store_meta_data_in_buffers(struct camera_device *dev, int enable)
 {
@@ -133,14 +152,14 @@ static int camdev_cancel_picture(struct camera_device *dev)
     return 0;
 }
 
-static int camdev_set_parameters(struct camera_device *dev, const char *parms)
+static int camdev_set_parameters(struct camera_device *dev, const char *params)
 {
     return 0;
 }
 
 static char* camdev_get_parameters(struct camera_device *dev)
 {
-    return NULL;
+    return "";
 }
 
 static void camdev_put_parameters(struct camera_device *dev, char *params)
@@ -163,16 +182,22 @@ static int camdev_send_command(struct camera_device *dev, int32_t cmd, int32_t a
         break;
     case CAMERA_CMD_STOP_FACE_DETECTION:
         break;
+#ifdef ANDROID_5_1
     case CAMERA_CMD_START_SMART_DETECTION:
         break;
     case CAMERA_CMD_STOP_SMART_DETECTION:
         break;
+#endif
     }
     return 0;
 }
 
 static void camdev_release(struct camera_device *dev)
 {
+    ffhal_camera_device_t *camdev = (ffhal_camera_device_t*)dev;
+    v4l2dev_capture_stop(camdev->v4l2dev);
+    v4l2dev_close(camdev->v4l2dev);
+    camdev->v4l2dev = NULL;
 }
 
 static int camdev_dump(struct camera_device *dev, int fd)
@@ -194,8 +219,10 @@ static camera_device_ops_t g_camdev_ops = {
     camdev_start_preview,
     camdev_stop_preview,
     camdev_preview_enabled,
+#ifdef ANDROID_5_1
     camdev_enable_preview,
     camdev_disable_preview,
+#endif
     camdev_store_meta_data_in_buffers,
     camdev_start_recording,
     camdev_stop_recording,
@@ -211,7 +238,6 @@ static camera_device_ops_t g_camdev_ops = {
     camdev_send_command,
     camdev_release,
     camdev_dump,
-    camdev_setfd,
 };
 
 int camdev_open(const hw_module_t *mod, const char *name, hw_device_t **dev)
@@ -237,6 +263,8 @@ int camdev_open(const hw_module_t *mod, const char *name, hw_device_t **dev)
     camdev->common.close   = camdev_close;
     camdev->ops            = &g_camdev_ops;
     camdev->cameraid       = id;
+    camdev->v4l2dev        = v4l2dev_init("/dev/video0", 0, 640, 480, 30);
+    v4l2dev_capture_start(camdev->v4l2dev);
 
     *dev = &camdev->common;
     return 0;
@@ -244,5 +272,10 @@ int camdev_open(const hw_module_t *mod, const char *name, hw_device_t **dev)
 
 int camdev_close(hw_device_t *device)
 {
+    ffhal_camera_device_t *camdev = (ffhal_camera_device_t*)device;
+    v4l2dev_capture_stop(camdev->v4l2dev);
+    v4l2dev_close(camdev->v4l2dev);
+    free(camdev);
     return 0;
 }
+

@@ -20,19 +20,21 @@ LOCAL_MODULE := camera.$(TARGET_BOARD_PLATFORM)
 LOCAL_MODULE_RELATIVE_PATH := hw
 
 LOCAL_C_INCLUDES += \
-	system/core/include \
-	system/media/camera/include \
+    system/core/include \
+    system/media/camera/include \
 
 LOCAL_SRC_FILES := \
-    v4l2dev.c \
-    camdev.c \
-    camhal.c
+    v4l2dev.cpp \
+    camdev.cpp \
+    camhal.cpp
 
 LOCAL_SHARED_LIBRARIES := \
     liblog \
-	libcutils
+    libcutils \
+    libui
 
-LOCAL_CFLAGS += -Wall -Wextra -fvisibility=hidden
+LOCAL_CFLAGS += -Wextra -fvisibility=hidden
+#LOCAL_CFLAGS += -DANDROID_5_1
 
 LOCAL_MODULE_TAGS := optional
 

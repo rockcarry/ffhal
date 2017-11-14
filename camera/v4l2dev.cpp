@@ -8,9 +8,15 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
-#include <system/graphics.h>
+#include <hardware/hardware.h>
+#include <hardware/camera_common.h>
+#include <hardware/camera.h>
+#include <ui/Rect.h>
+#include <ui/GraphicBufferMapper.h>
 #include <utils/Log.h>
 #include "v4l2dev.h"
+
+using namespace android;
 
 // 内部常量定义
 #define DO_USE_VAR(v)   do { v = v; } while (0)
@@ -61,17 +67,31 @@ static void render_v4l2(V4L2DEV *dev,
         return;
     }
 
-//  ALOGD("srcfmt = 0x%0x, srcw = %d, srch = %d, srclen = %d, sws_src_fmt = 0x%0x\n", srcfmt, srcw, srch, srclen, sws_src_fmt);
-//  ALOGD("dstfmt = 0x%0x, dstw = %d, dsth = %d, dstlen = %d, sws_dst_fmt = 0x%0x\n", dstfmt, dstw, dsth, dstlen, sws_dst_fmt);
+    // dst len
+    if (dstlen == -1) {
+        switch (dstfmt) {
+        case HAL_PIXEL_FORMAT_RGB_565:      dstlen = dstw * dsth * 2; break;
+        case HAL_PIXEL_FORMAT_RGBX_8888:    dstlen = dstw * dsth * 4; break;
+        case HAL_PIXEL_FORMAT_YV12:         dstlen = dstw * dsth + dstw * dsth / 2; break;
+        case HAL_PIXEL_FORMAT_YCrCb_420_SP: dstlen = dstw * dsth + dstw * dsth / 2; break;
+        default:                            dstlen = 0; break;
+        }
+    }
+
+    if (srcfmt == V4L2_PIX_FMT_NV12) {
+        srcfmt = HAL_PIXEL_FORMAT_YCrCb_420_SP;
+    }
+
+//  ALOGD("srcfmt = 0x%0x, srcw = %d, srch = %d, srclen = %d\n", srcfmt, srcw, srch, srclen);
+//  ALOGD("dstfmt = 0x%0x, dstw = %d, dsth = %d, dstlen = %d\n", dstfmt, dstw, dsth, dstlen);
 
     // memcpy if same fmt and size
     if (srcfmt == dstfmt && srcw == dstw && srch == dsth) {
-//      ALOGD("===ck=== sws_src_fmt = 0x%0x, sws_dst_fmt = 0x%0x", sws_src_fmt, sws_dst_fmt);
 //      memcpy(dstbuf, (uint8_t*)srcbuf + 0, (dstlen < srclen ? dstlen : srclen) - 0);
         memcpy(dstbuf, (uint8_t*)srcbuf + 1, (dstlen < srclen ? dstlen : srclen) - 1);
         return;
     } else {
-        // todo...
+        ALOGD("render_v4l2:: need do color convert or scale for camera picture !");
     }
 }
 
@@ -141,8 +161,11 @@ static void* v4l2dev_capture_thread_proc(void *param)
 
 static void* v4l2dev_render_thread_proc(void *param)
 {
-    V4L2DEV *dev = (V4L2DEV*)param;
-    int      err;
+    V4L2DEV                   *dev     = (V4L2DEV*)param;
+    struct preview_stream_ops *preview = NULL;
+    buffer_handle_t           *buf     = NULL;
+    int                        stride  = 0;
+    int                        success = 0;
 
     while (!(dev->thread_state & V4L2DEV_TS_EXIT)) {
         if (0 != sem_wait(&dev->sem_render)) {
@@ -155,6 +178,13 @@ static void* v4l2dev_render_thread_proc(void *param)
         }
 
         if (dev->update_flag) {
+            preview = (struct preview_stream_ops*)dev->window;
+            if (preview) {
+                preview->set_usage           (preview, V4L2DEV_GRALLOC_USAGE);
+                preview->set_buffer_count    (preview, NATIVE_WIN_BUFFER_COUNT);
+                preview->set_buffers_geometry(preview, dev->cam_w, dev->cam_h, DEF_WIN_PIX_FMT);
+                preview->set_crop            (preview, 0, 0, dev->cam_w, dev->cam_h);
+            }
             dev->update_flag = 0;
         }
 
@@ -162,25 +192,29 @@ static void* v4l2dev_render_thread_proc(void *param)
         char *data = (char*)dev->vbs[dev->buf.index].addr;
         int   len  = dev->buf.bytesused;
 
-#if 0
-        ANativeWindowBuffer *buf;
-        if (dev->cur_win != NULL && 0 == native_window_dequeue_buffer_and_wait(dev->cur_win.get(), &buf)) {
-            GraphicBufferMapper &mapper = GraphicBufferMapper::get();
-            Rect bounds(buf->width, buf->height);
-            void *dst = NULL;
-
-            if (0 == mapper.lock(buf->handle, GRALLOC_USAGE_SW_WRITE_OFTEN, bounds, &dst)) {
-                render_v4l2(dev,
-                    dst , -1 , buf->format    , buf->width, buf->height,
-                    data, len, dev->cam_pixfmt, dev->cam_w, dev->cam_h, pts);
-                mapper.unlock(buf->handle);
+        if (preview && 0 == preview->dequeue_buffer(preview, &buf, &stride)) {
+            success = 0;
+            if (0 == preview->lock_buffer(preview, buf)) {
+                GraphicBufferMapper &mapper = GraphicBufferMapper::get();
+                Rect                 rect(dev->cam_w, dev->cam_h);
+                void                *dst    = NULL;
+                if (0 == mapper.lock(*buf, GRALLOC_USAGE_SW_WRITE_OFTEN, rect, &dst)) {
+                    render_v4l2(dev,
+                        dst , -1 , DEF_WIN_PIX_FMT, dev->cam_w, dev->cam_h,
+                        data, len, dev->cam_pixfmt, dev->cam_w, dev->cam_h, pts);
+                    mapper.unlock(*buf);
+                    success = 1;
+                }
             }
 
-            if ((err = dev->cur_win->queueBuffer(dev->cur_win.get(), buf, -1)) != 0) {
-                ALOGW("Surface::queueBuffer returned error %d\n", err);
+            if (success) {
+                if (preview->enqueue_buffer(preview, buf) != 0) {
+                    ALOGW("preview->enqueue_buffer failed !\n");
+                }
+            } else {
+                preview->cancel_buffer(preview, buf);
             }
         }
-#endif
     }
 
 //  ALOGD("v4l2dev_render_thread_proc exited !");
@@ -248,14 +282,10 @@ static int v4l2_try_fmt_size(int fd, int fmt, int *width, int *height)
 void* v4l2dev_init(const char *name, int sub, int w, int h, int frate)
 {
     int i;
-    V4L2DEV *dev = calloc(1, sizeof(V4L2DEV));
+    V4L2DEV *dev = (V4L2DEV*)calloc(1, sizeof(V4L2DEV));
     if (!dev) {
         return NULL;
     }
-
-#ifdef PLATFORM_ALLWINNER_A33
-    ion_alloc_open();
-#endif
 
     // open camera device
     dev->fd = open(name, O_RDWR | O_NONBLOCK);
@@ -398,10 +428,6 @@ void v4l2dev_close(void *ctxt)
     // close & free
     close(dev->fd);
     free (dev);
-
-#ifdef PLATFORM_ALLWINNER_A33
-    ion_alloc_close();
-#endif
 }
 
 void v4l2dev_set_preview_window(void *ctxt, void *win)

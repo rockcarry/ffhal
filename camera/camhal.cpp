@@ -19,6 +19,22 @@ static int get_camera_info(int id, struct camera_info* info)
     return 0;
 }
 
+#ifdef ANDROID_5_1
+static int set_callbacks(const camera_module_callbacks_t *callbacks)
+{
+    return 0;
+}
+
+static void get_vendor_tag_ops(vendor_tag_ops_t *ops)
+{
+}
+
+static int open_legacy(const struct hw_module_t *module, const char *id, uint32_t halver, struct hw_device_t **device)
+{
+    return 0;
+}
+#endif
+
 static hw_module_methods_t g_camera_module_methods = {
     open : camdev_open
 };
@@ -36,8 +52,12 @@ camera_module_t HAL_MODULE_INFO_SYM __attribute__ ((visibility("default"))) = {
         dso                : NULL,
         reserved           : {0},
     },
-    get_number_of_cameras : get_number_of_cameras,
-    get_camera_info       : get_camera_info,
-    reserved              : {0},
+    get_number_of_cameras  : get_number_of_cameras,
+    get_camera_info        : get_camera_info,
+#ifdef ANDROID_5_1
+    set_callbacks          : set_callbacks,
+    get_vendor_tag_ops     : get_vendor_tag_ops,
+    open_legacy            : open_legacy,
+    reserved               : { NULL }
+#endif
 };
-
