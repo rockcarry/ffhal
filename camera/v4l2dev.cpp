@@ -98,7 +98,6 @@ static void render_v4l2(V4L2DEV *dev,
 static void* v4l2dev_capture_thread_proc(void *param)
 {
     V4L2DEV  *dev = (V4L2DEV*)param;
-    int       err;
 
     //++ for select
     fd_set        fds;
@@ -482,5 +481,21 @@ void v4l2dev_preview_stop(void *ctxt)
     dev->thread_state &= ~V4L2DEV_TS_PREVIEW;
 }
 
+int v4l2dev_get_param(void *ctxt, int id)
+{
+    V4L2DEV *dev = (V4L2DEV*)ctxt;
+    if (!dev) return 0;
+    switch (id) {
+    case V4L2DEV_PARAM_VIDEO_WIDTH:
+        return dev->cam_w;
+    case V4L2DEV_PARAM_VIDEO_HEIGHT:
+        return dev->cam_h;
+    case V4L2DEV_PARAM_VIDEO_PIXFMT:
+        return dev->cam_pixfmt;
+    case V4L2DEV_PARAM_VIDEO_FRATE:
+        return dev->cam_frate_num / dev->cam_frate_den;
+    }
+    return 0;
+}
 
 

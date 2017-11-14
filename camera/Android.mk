@@ -33,7 +33,7 @@ LOCAL_SHARED_LIBRARIES := \
     libcutils \
     libui
 
-LOCAL_CFLAGS += -Wextra -fvisibility=hidden
+LOCAL_CFLAGS += -Wall -Wextra -fvisibility=hidden
 #LOCAL_CFLAGS += -DANDROID_5_1
 
 LOCAL_MODULE_TAGS := optional

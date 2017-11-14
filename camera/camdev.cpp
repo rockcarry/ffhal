@@ -29,6 +29,25 @@ typedef struct {
 } ffhal_camera_device_t;
 
 // 内部函数实现
+static void read_data_by_key(const char *section, const char *key, char *data, int len)
+{
+    char *str = NULL;
+    int   i   = 0;
+    if (!section) return;
+    str = strstr(section, key);
+    if (!str) return;
+    else str += strlen(key);
+    for (; *str && *str != ';'; str++) {
+        if (*str == '=') break;
+    }
+    if (*str != '=') return;
+    for (str++; *str == ' '; str++);
+    for (i=0; i<len-1 && *str && *str != ';'; i++) {
+        *data++ = *str++;
+    }
+    *data = '\0';
+}
+
 static int camdev_set_preview_window(struct camera_device *dev, struct preview_stream_ops *window)
 {
     ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
@@ -73,7 +92,6 @@ static int camdev_start_preview(struct camera_device *dev)
 {
     ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
     if ((cam->status & STATUS_PREVIEW_EN) == 0) {
-        ALOGD("camdev_start_preview");
         v4l2dev_preview_start(cam->v4l2dev);
         cam->status |= STATUS_PREVIEW_EN;
     }
@@ -84,7 +102,6 @@ static void camdev_stop_preview(struct camera_device *dev)
 {
     ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
     if ((cam->status & STATUS_PREVIEW_EN) != 0) {
-        ALOGD("camdev_stop_preview");
         v4l2dev_preview_stop(cam->v4l2dev);
         cam->status &=~STATUS_PREVIEW_EN;
     }
@@ -93,7 +110,6 @@ static void camdev_stop_preview(struct camera_device *dev)
 static int camdev_preview_enabled(struct camera_device *dev)
 {
     ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
-    ALOGD("camdev_preview_enabled");
     return (cam->status & STATUS_PREVIEW_EN) ? 1 : 0;
 }
 
@@ -154,12 +170,54 @@ static int camdev_cancel_picture(struct camera_device *dev)
 
 static int camdev_set_parameters(struct camera_device *dev, const char *params)
 {
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    int   w = 0, h = 0, frate = 0;
+    char  data[64] = "";
+    char *temp     = NULL;
+
+    read_data_by_key(params, "preview-size", data, sizeof(data));
+    temp = strchr(data, 'x');
+    if (temp) *temp = ' ';
+    sscanf(data, "%d %d", &w, &h);
+
+    read_data_by_key(params, "preview-frame-rate", data, sizeof(data));
+    frate = atoi(data);
+
+    if (  w != v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_WIDTH)
+       || h != v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_HEIGHT)
+       || frate != v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_FRATE) )
+    {
+        if (cam->v4l2dev) {
+            if ((cam->status & STATUS_PREVIEW_EN) != 0) {
+                v4l2dev_preview_stop(cam->v4l2dev);
+            }
+            v4l2dev_capture_stop(cam->v4l2dev);
+            v4l2dev_close(cam->v4l2dev);
+        }
+        cam->v4l2dev = v4l2dev_init(CAM_DEV_FILE, 0, w, h, frate);
+        if (cam->v4l2dev) {
+            v4l2dev_capture_start(cam->v4l2dev);
+            if ((cam->status & STATUS_PREVIEW_EN) != 0) {
+                v4l2dev_preview_start(cam->v4l2dev);
+            }
+        }
+    }
     return 0;
 }
 
 static char* camdev_get_parameters(struct camera_device *dev)
 {
-    return "";
+    static char g_camera_params_str[256] = {0};
+    ffhal_camera_device_t *cam = (ffhal_camera_device_t*)dev;
+    sprintf(g_camera_params_str,
+        "preview-size=%dx%d;"
+        "preview-size-values=640x480,1280x720,1920x1080;"
+        "preview-frame-rate=%d;"
+        "preview-frame-rate-values=25,30;",
+        v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_WIDTH),
+        v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_HEIGHT),
+        v4l2dev_get_param(cam->v4l2dev, V4L2DEV_PARAM_VIDEO_FRATE) );
+    return g_camera_params_str;
 }
 
 static void camdev_put_parameters(struct camera_device *dev, char *params)
@@ -210,6 +268,11 @@ static int camdev_setfd(struct camera_device *dev, int fd)
     return 0;
 }
 
+static int camdev_set_watermark(struct camera_device *dev, const char* watermark)
+{
+    return 0;
+}
+
 static camera_device_ops_t g_camdev_ops = {
     camdev_set_preview_window,
     camdev_set_callbacks,
@@ -238,6 +301,8 @@ static camera_device_ops_t g_camdev_ops = {
     camdev_send_command,
     camdev_release,
     camdev_dump,
+    camdev_setfd,
+    camdev_set_watermark,
 };
 
 int camdev_open(const hw_module_t *mod, const char *name, hw_device_t **dev)
@@ -263,7 +328,7 @@ int camdev_open(const hw_module_t *mod, const char *name, hw_device_t **dev)
     camdev->common.close   = camdev_close;
     camdev->ops            = &g_camdev_ops;
     camdev->cameraid       = id;
-    camdev->v4l2dev        = v4l2dev_init("/dev/video0", 0, 640, 480, 30);
+    camdev->v4l2dev        = v4l2dev_init(CAM_DEV_FILE, 0, 640, 480, 30);
     v4l2dev_capture_start(camdev->v4l2dev);
 
     *dev = &camdev->common;
