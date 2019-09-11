@@ -28,16 +28,16 @@ typedef struct {
     int               nmeanum ;
 
     int8_t            gps_satidx;
-    GPS_SATELLITE     gps_satlist[16];
-    int8_t            gps_inuse[12];
+    GPS_SATELLITE     gps_satlist[MAX_SATELLITES_NUM];
+    int8_t            gps_inuse[MAX_SATELLITES_NUM+1];
 
     int8_t            bds_satidx;
-    GPS_SATELLITE     bds_satlist[16];
-    int8_t            bds_inuse[12];
+    GPS_SATELLITE     bds_satlist[MAX_SATELLITES_NUM];
+    int8_t            bds_inuse[MAX_SATELLITES_NUM+1];
 
     int8_t            gns_satidx;
-    GPS_SATELLITE     gns_satlist[16];
-    int8_t            gns_inuse[12];
+    GPS_SATELLITE     gns_satlist[MAX_SATELLITES_NUM];
+    int8_t            gns_inuse[MAX_SATELLITES_NUM+1];
 } CONTEXT;
 
 static int str2int(char *str, int len)
@@ -63,30 +63,40 @@ static void do_nmea_parse(CONTEXT *ctxt, char *sentence)
     GPS_STATUS    *status   = NULL;
     GPS_SATELLITE *satelist = NULL;
     int8_t        *satidx   = NULL;
-    int8_t        *inuse    = NULL;
+    int8_t        *satinuse = NULL;
     int type, i, j;
 
+#if 0
     if (memcmp(sentence, "$GP", 3) == 0) {
         type     = GS_TYPE_GPS;
         status   =&ctxt->gps_status;
         satelist = ctxt->gps_satlist;
         satidx   =&ctxt->gps_satidx;
-        inuse    = ctxt->gps_inuse;
+        satinuse = ctxt->gps_inuse;
     } else if (memcmp(sentence, "$GB", 3) == 0) {
         type     = GS_TYPE_BEIDOU;
         status   =&ctxt->bds_status;
         satelist = ctxt->bds_satlist;
         satidx   =&ctxt->bds_satidx;
-        inuse    = ctxt->bds_inuse;
+        satinuse = ctxt->bds_inuse;
     } else if (memcmp(sentence, "$GN", 3) == 0) {
         type     = GS_TYPE_GLONASS;
         status   =&ctxt->gns_status;
         satelist = ctxt->gns_satlist;
         satidx   =&ctxt->gns_satidx;
-        inuse    = ctxt->gns_inuse;
+        satinuse = ctxt->gns_inuse;
     } else return;
+#else
+    if (memcmp(sentence, "$GP", 3) == 0 || memcmp(sentence, "$GB", 3) == 0 ||memcmp(sentence, "$GN", 3) == 0) {
+        type     = GS_TYPE_GPS;
+        status   =&ctxt->gps_status;
+        satelist = ctxt->gps_satlist;
+        satidx   =&ctxt->gps_satidx;
+        satinuse = ctxt->gps_inuse;
+    } else return;
+#endif
 
-    ALOGD("%s", sentence);
+//  ALOGD("%s", sentence);
     ctxt->callback(ctxt->cbparams, type, GD_TYPE_RAWDATA, sentence);
 
     //++ split sentence to tokens
@@ -116,6 +126,7 @@ static void do_nmea_parse(CONTEXT *ctxt, char *sentence)
         } else if (status->fixstatus == 0) {
             status->fixstatus = GPS_FIXED;
         }
+        ctxt->callback(ctxt->cbparams, type, GD_TYPE_LOCATION, status);
     } else if (memcmp(tokens[0], "GGA", 3) == 0) {
         status->datetime.tm_hour = str2int(tokens[1] + 0, 2);
         status->datetime.tm_min  = str2int(tokens[1] + 2, 2);
@@ -124,44 +135,57 @@ static void do_nmea_parse(CONTEXT *ctxt, char *sentence)
         status->longitude = (tokens[5][0] == 'W' ? -1 : 1) * dm2ddd(strtod(tokens[4], NULL));
         status->hdop      = (float)strtod(tokens[8], NULL);
         status->altitude  = (float)strtod(tokens[9], NULL);
-        status->inuse     = atoi(tokens[7]);
+        status->ninuse    = atoi(tokens[7]);
     } else if (memcmp(tokens[0], "GSA", 3) == 0) {
         status->fixstatus = tokens[2][0] > '1' ? tokens[2][0] - '0' : 0;
         status->pdop      = (float)strtod(tokens[15], NULL);
         status->hdop      = (float)strtod(tokens[16], NULL);
         status->vdop      = (float)strtod(tokens[17], NULL);
-        for (i=0; i<12; i++) inuse[i] = tokens[3+i][0] ? atoi(tokens[3+i]) : -1;
+        for (i=0; i<12; i++) {
+            int prn = tokens[3+i][0] ? atoi(tokens[3+i]) : -1;
+            if (prn > 0 && satinuse[MAX_SATELLITES_NUM] < MAX_SATELLITES_NUM) {
+                satinuse[satinuse[MAX_SATELLITES_NUM]++] = prn;
+            }
+        }
     } else if (memcmp(tokens[0], "GSV", 3) == 0) {
         if (atoi(tokens[2]) == 1) {
-            memset(satelist, 0, sizeof(GPS_SATELLITE) * 16);
+            memset(satelist, 0, sizeof(GPS_SATELLITE) * MAX_SATELLITES_NUM);
             *satidx = 0;
         }
-        status->inview = atoi(tokens[3]);
-        status->inview = status->inview < 16 ? status->inview : 16;
+        status->ninview = atoi(tokens[3]);
+        status->ninview = status->ninview < MAX_SATELLITES_NUM ? status->ninview : MAX_SATELLITES_NUM;
         for (i=0; i<4; i++) {
-            if (*satidx >= 16) break;
+            if (*satidx >= MAX_SATELLITES_NUM) break;
             satelist[*satidx].prn       = tokens[i*4+4][0] ? atoi(tokens[i*4+4]) : -1;
             satelist[*satidx].elevation = tokens[i*4+5][0] ? atoi(tokens[i*4+5]) : -1;
             satelist[*satidx].azimuth   = tokens[i*4+6][0] ? atoi(tokens[i*4+6]) : -1;
             satelist[*satidx].snr       = tokens[i*4+7][0] ? atoi(tokens[i*4+7]) :  0;
-            for (j=0; j<12; j++) {
-                if (inuse[j] == satelist[*satidx].prn) {
-                    satelist[*satidx].inuse = 1;
+            for (j=0; j<satinuse[MAX_SATELLITES_NUM]; j++) {
+                if (satinuse[j] == satelist[*satidx].prn) {
+                    satelist[*satidx].isinuse = 1;
                 }
             }
             (*satidx)++;
         }
         if (atoi(tokens[1]) == atoi(tokens[2])) {
-            memcpy(status->satellites, satelist, sizeof(GPS_SATELLITE) * 16);
-            ctxt->callback(ctxt->cbparams, type, GD_TYPE_STATUS, status);
+            satinuse[MAX_SATELLITES_NUM] = 0;
+            memset(satinuse, -1, sizeof(int8_t) * MAX_SATELLITES_NUM);
+            memcpy(status->satellites, satelist, sizeof(GPS_SATELLITE) * MAX_SATELLITES_NUM);
+            ctxt->callback(ctxt->cbparams, type, GD_TYPE_SATELLITES, status);
         }
     }
 
     if (memcmp(tokens[0], "RMC", 3) == 0 || memcmp(tokens[0], "GGA", 3) == 0) {
-        time_t   utctime  = timegm(&status->datetime);
-        struct tm loc_tm  = {0};
+        time_t   utctime = timegm(&status->datetime);
+        time_t   loctime = 0;
+        struct tm loc_tm = {};
         localtime_r(&utctime, &loc_tm);
-        status->timestamp = (int64_t)mktime(&loc_tm) * 1000;
+        loctime = mktime(&loc_tm);
+        status->timestamp = (int64_t)loctime * 1000;
+        if (status->fixstatus >= GPS_FIXED && labs(time(NULL) - utctime) > 60) {
+            struct timeval tv = { loctime, 0 };
+            settimeofday(&tv, NULL);
+        }
     }
 }
 
@@ -241,13 +265,18 @@ static void* read_thread_proc(void *param)
 
         if (nodata == 5) {
             ALOGD("read_thread_proc no gps data, clear gps status !\n");
-            memset(&ctxt->gps_status, 0, sizeof(GPS_STATUS)); ctxt->callback(ctxt->cbparams, GS_TYPE_GPS    , GD_TYPE_STATUS, &ctxt->gps_status);
-            memset(&ctxt->bds_status, 0, sizeof(GPS_STATUS)); ctxt->callback(ctxt->cbparams, GS_TYPE_BEIDOU , GD_TYPE_STATUS, &ctxt->bds_status);
-            memset(&ctxt->gns_status, 0, sizeof(GPS_STATUS)); ctxt->callback(ctxt->cbparams, GS_TYPE_GLONASS, GD_TYPE_STATUS, &ctxt->gns_status);
+            memset(&ctxt->gps_status, 0, sizeof(GPS_STATUS));
+            memset(&ctxt->bds_status, 0, sizeof(GPS_STATUS));
+            memset(&ctxt->gns_status, 0, sizeof(GPS_STATUS));
+            ctxt->callback(ctxt->cbparams, GS_TYPE_GPS    , GD_TYPE_LOCATION  , &ctxt->gps_status);
+            ctxt->callback(ctxt->cbparams, GS_TYPE_GPS    , GD_TYPE_SATELLITES, &ctxt->gps_status);
+            ctxt->callback(ctxt->cbparams, GS_TYPE_BEIDOU , GD_TYPE_LOCATION  , &ctxt->bds_status);
+            ctxt->callback(ctxt->cbparams, GS_TYPE_BEIDOU , GD_TYPE_SATELLITES, &ctxt->bds_status);
+            ctxt->callback(ctxt->cbparams, GS_TYPE_GLONASS, GD_TYPE_LOCATION  , &ctxt->gns_status);
+            ctxt->callback(ctxt->cbparams, GS_TYPE_GLONASS, GD_TYPE_SATELLITES, &ctxt->gns_status);
         }
 
         if (fd == -1) {
-//          fd = open(ctxt->dev, O_RDONLY);
             fd = open_serial_port(ctxt->dev);
         }
         if (fd <= 0) {
@@ -306,7 +335,7 @@ void nmea_exit(void *ctx)
     free(ctxt);
 }
 
-void* nmea_gps_status(void *ctx, int type)
+GPS_STATUS* nmea_gps_status(void *ctx, int type)
 {
     CONTEXT *ctxt = (CONTEXT*)ctx;
     switch (type) {

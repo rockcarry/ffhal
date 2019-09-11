@@ -1,12 +1,13 @@
 
 #define LOG_TAG  "apical_gpshal"
+#include <stdlib.h>
+#include <string.h>
 #include <cutils/log.h>
 #include <hardware/gps.h>
 #include "nmea.h"
 
 #define DO_USE_VAR(v) do { v = v; } while (0)
 #define GPS_UART_DEV_NAME  "/dev/ttyS2"
-#define APICAL_DEV_NAME    "/dev/apical"
 
 typedef struct {
     void        *nmea;
@@ -14,17 +15,10 @@ typedef struct {
     int          start;
 } GPSHALCTXT;
 
-static GPSHALCTXT g_gps_ctxt = { NULL };
+static GPSHALCTXT g_gps_ctxt = {};
 
 static void set_gps_hw_pwr(int pwr) {
     DO_USE_VAR(pwr);
-#if 0
-    int fd = open(APICAL_DEV_NAME, O_RDWR);
-    char str[16];
-    snprintf(str, sizeof(str), "gps %d", pwr);
-    write(fd, str, strlen(str));
-    close(fd);
-#endif
 }
 
 static void nmea_callback(void *params, int stype, int dtype, void *data)
@@ -32,20 +26,18 @@ static void nmea_callback(void *params, int stype, int dtype, void *data)
     GPSHALCTXT *halctxt  = (GPSHALCTXT*)params;
     GPS_STATUS *status   = (GPS_STATUS*)data;
     char       *rawdata  = (char*)data;
-    GpsLocation location = {0};
-    GpsSvStatus svstatus = {0};
+    GpsLocation location = {};
+    GpsSvStatus svstatus = {};
     int i;
 
-    ALOGD("nmea_callback stype: %d, dtype: %d\n", stype, dtype);
+//  ALOGD("nmea_callback stype: %d, dtype: %d\n", stype, dtype);
     if (halctxt->start == 0) return;
-    if (dtype == GD_TYPE_RAWDATA) {
-        GPS_STATUS *s = nmea_gps_status(halctxt->nmea, stype);
-        halctxt->callbacks.nmea_cb(s->timestamp, rawdata, strlen(rawdata));
-        return;
-    }
 
-    switch (stype) {
-    case GS_TYPE_GPS:
+    switch (dtype) {
+    case GD_TYPE_RAWDATA:
+        halctxt->callbacks.nmea_cb(nmea_gps_status(halctxt->nmea, stype)->timestamp, rawdata, strlen(rawdata));
+        break;
+    case GD_TYPE_LOCATION:
         location.latitude  = status->latitude;
         location.longitude = status->longitude;
         location.altitude  = status->altitude;
@@ -62,28 +54,34 @@ static void nmea_callback(void *params, int stype, int dtype, void *data)
             location.flags = GPS_LOCATION_HAS_LAT_LONG|GPS_LOCATION_HAS_ALTITUDE;
             break;
         }
-        location.size    = sizeof(GpsLocation);
-        location.flags  |= location.speed    > 0 ? GPS_LOCATION_HAS_SPEED    : 0;
-        location.flags  |= location.accuracy > 0 ? GPS_LOCATION_HAS_ACCURACY : 0;
-        location.flags  |= location.bearing  > 0 ? GPS_LOCATION_HAS_BEARING  : 0;
-        svstatus.size    = sizeof(GpsSvStatus);
-        svstatus.num_svs = status->inview;
-        for (i=0; i<status->inview&&i<GPS_MAX_SVS&&i<16; i++) {
-            svstatus.sv_list[i].size     = sizeof(GpsSvInfo);
-            svstatus.sv_list[i].prn      = status->satellites[i].prn;
-            svstatus.sv_list[i].snr      = status->satellites[i].snr;
-            svstatus.sv_list[i].elevation= status->satellites[i].elevation;
-            svstatus.sv_list[i].azimuth  = status->satellites[i].azimuth;
-            if (status->satellites[i].inuse) {
-                svstatus.used_in_fix_mask |= (1 << (status->satellites[i].prn - 1));
+        location.size   = sizeof(GpsLocation);
+        location.flags |= location.speed    > 0 ? GPS_LOCATION_HAS_SPEED    : 0;
+        location.flags |= location.accuracy > 0 ? GPS_LOCATION_HAS_ACCURACY : 0;
+        location.flags |= location.bearing  > 0 ? GPS_LOCATION_HAS_BEARING  : 0;
+        halctxt->callbacks.location_cb(&location);
+        break;
+    case GD_TYPE_SATELLITES:
+        switch (stype) {
+        case GS_TYPE_GPS:
+            svstatus.size    = sizeof(GpsSvStatus);
+            svstatus.num_svs = status->ninview;
+            for (i=0; i<status->ninview&&i<GPS_MAX_SVS&&i<MAX_SATELLITES_NUM; i++) {
+                svstatus.sv_list[i].size     = sizeof(GpsSvInfo);
+                svstatus.sv_list[i].prn      = status->satellites[i].prn;
+                svstatus.sv_list[i].snr      = status->satellites[i].snr;
+                svstatus.sv_list[i].elevation= status->satellites[i].elevation;
+                svstatus.sv_list[i].azimuth  = status->satellites[i].azimuth;
+                if (status->satellites[i].isinuse) {
+                    svstatus.used_in_fix_mask |= (1 << (status->satellites[i].prn - 1));
+                }
             }
+            halctxt->callbacks.sv_status_cb(&svstatus);
+            break;
+        case GS_TYPE_BEIDOU:
+            break;
+        case GS_TYPE_GLONASS:
+            break;
         }
-        halctxt->callbacks.location_cb (&location);
-        halctxt->callbacks.sv_status_cb(&svstatus);
-        break;
-    case GS_TYPE_BEIDOU:
-        break;
-    case GS_TYPE_GLONASS:
         break;
     }
 }

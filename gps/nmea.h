@@ -9,7 +9,7 @@ typedef struct {
     int8_t  snr;
     int16_t elevation;
     int16_t azimuth;
-    int8_t  inuse;
+    int8_t  isinuse;
 } GPS_SATELLITE;
 
 typedef struct {
@@ -21,15 +21,16 @@ typedef struct {
     double    longitude;
     float     altitude ;
     struct tm datetime ;
-    int16_t   timestamp;
-    float     speed ;
-    float     course;
-    float     pdop  ;
-    float     hdop  ;
-    float     vdop  ;
-    int8_t    inuse ;
-    int8_t    inview;
-    GPS_SATELLITE satellites[16];
+    int64_t   timestamp;
+    float     speed  ;
+    float     course ;
+    float     pdop   ;
+    float     hdop   ;
+    float     vdop   ;
+    int8_t    ninuse ;
+    int8_t    ninview;
+    #define MAX_SATELLITES_NUM  32
+    GPS_SATELLITE satellites[MAX_SATELLITES_NUM];
 } GPS_STATUS;
 
 enum {
@@ -39,7 +40,8 @@ enum {
 };
 
 enum {
-    GD_TYPE_STATUS,
+    GD_TYPE_LOCATION,
+    GD_TYPE_SATELLITES,
     GD_TYPE_RAWDATA,
 };
 
@@ -48,7 +50,7 @@ typedef void (*PFN_NMEA_CALLBACK)(void *params, int stype, int dtype, void *data
 
 void* nmea_init(char *dev, PFN_NMEA_CALLBACK cb, PFN_CREATE_THREAD pfnct, void *params);
 void  nmea_exit(void *ctx);
-void* nmea_gps_status(void *ctx, int type);
+GPS_STATUS* nmea_gps_status(void *ctx, int type);
 
 #endif
 
